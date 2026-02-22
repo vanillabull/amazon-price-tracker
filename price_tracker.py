@@ -7,14 +7,31 @@ import resend
 import requests
 import threading
 import time
+import math
+import random
 from datetime import datetime
 from bs4 import BeautifulSoup
 import customtkinter as ctk
+import tkinter as tk
 
-resend.api_key = "PASTE_YOUR_API_KEY_HERE" # <---- Im using resend api, get an API key and paste it here
+resend.api_key = ""
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
+BG_DEEP      = "#080e1a" 
+BG_MID       = "#0d1628" 
+FROST_1      = "#111e35"  
+FROST_2      = "#162440" 
+BORDER       = "#1e3356"  
+ACCENT_ICE   = "#a8d8f0" 
+ACCENT_SNOW  = "#deeeff" 
+ACCENT_GLOW  = "#4da6d6"   
+GREEN_FROST  = "#5ddba5"   
+ORANGE_EMBER = "#f09060"   
+TEXT_PRIMARY = "#deeeff"   
+TEXT_MUTED   = "#4a6a8a"  
+TEXT_DIM     = "#2a4a6a"   
 
 
 def send_email(subject: str, body: str, to: str) -> None:
@@ -59,229 +76,308 @@ def grab_price(url: str) -> float | None:
             return float(text)
 
         return None
-    except Exception as e:
+    except Exception:
         return None
+
+
+class SnowCanvas(tk.Canvas):
+    """Animated snowflakes drawn on a tkinter Canvas."""
+
+    FLAKE_CHARS = ["·", "•", "❄", "❅", "❆", "✦", "*"]
+
+    def __init__(self, master, width, height, **kwargs):
+        super().__init__(
+            master,
+            width=width, height=height,
+            bg=BG_DEEP,
+            highlightthickness=0,
+            **kwargs,
+        )
+        self.w = width
+        self.h = height
+        self._flakes = []
+        self._running = True
+        self._init_flakes(55)
+        self._animate()
+
+    def _init_flakes(self, n: int):
+        for _ in range(n):
+            self._flakes.append(self._new_flake(random.randint(0, self.h)))
+
+    def _new_flake(self, y=None):
+        size  = random.choice([7, 8, 9, 10, 11, 13])
+        speed = random.uniform(0.3, 1.1)
+        drift = random.uniform(-0.3, 0.3)
+        char  = random.choice(self.FLAKE_CHARS)
+        alpha_level = random.choice(["#1a2e44", "#1e3450", "#243d5a", "#1a2840", "#152030"])
+        return {
+            "x": random.uniform(0, self.w),
+            "y": random.uniform(0, self.h) if y is None else y,
+            "speed": speed,
+            "drift": drift,
+            "char": char,
+            "size": size,
+            "color": alpha_level,
+            "id": None,
+            "wobble": random.uniform(0, math.pi * 2),
+        }
+
+    def _animate(self):
+        if not self._running:
+            return
+        self.delete("flake")
+        for f in self._flakes:
+            f["wobble"] += 0.03
+            f["x"] += f["drift"] + math.sin(f["wobble"]) * 0.4
+            f["y"] += f["speed"]
+            if f["y"] > self.h + 20:
+                f["x"] = random.uniform(0, self.w)
+                f["y"] = -10
+                f["color"] = random.choice(["#1a2e44", "#1e3450", "#243d5a", "#1a2840", "#152030"])
+                f["speed"] = random.uniform(0.3, 1.1)
+            self.create_text(
+                f["x"], f["y"],
+                text=f["char"],
+                font=("Helvetica", f["size"]),
+                fill=f["color"],
+                tags="flake",
+            )
+        self.after(40, self._animate)
+
+    def stop(self):
+        self._running = False
+
+
+class FrostEntry(ctk.CTkEntry):
+    def __init__(self, master, **kwargs):
+        super().__init__(
+            master,
+            height=44,
+            fg_color=FROST_2,
+            border_color=BORDER,
+            border_width=1,
+            text_color=TEXT_PRIMARY,
+            placeholder_text_color=TEXT_DIM,
+            font=ctk.CTkFont(family="Consolas", size=13),
+            corner_radius=10,
+            **kwargs,
+        )
 
 
 class PriceTrackerApp(ctk.CTk):
 
+    WIN_W = 660
+    WIN_H = 780
+
     def __init__(self):
         super().__init__()
 
-        self.title("Price Tracker")
-        self.geometry("680x720")
+        self.title("❄  Price Tracker")
+        self.geometry(f"{self.WIN_W}x{self.WIN_H}")
         self.resizable(False, False)
-        self.configure(fg_color="#0f0f14")
+        self.configure(fg_color=BG_DEEP)
 
-        self._tracking      = False
-        self._thread        = None
-        self._last_price    = None
-        self._check_count   = 0
+        self._tracking    = False
+        self._thread      = None
+        self._last_price  = None
+        self._check_count = 0
+        self._start_price = None
 
         self._build_ui()
 
 
     def _build_ui(self):
+        self.snow = SnowCanvas(self, self.WIN_W, self.WIN_H)
+        self.snow.place(x=0, y=0)
 
-        header = ctk.CTkFrame(self, fg_color="#0f0f14", corner_radius=0)
-        header.pack(fill="x", padx=0, pady=0)
-
-        ctk.CTkLabel(
-            header,
-            text="◈  PRICE TRACKER",
-            font=ctk.CTkFont(family="Courier New", size=22, weight="bold"),
-            text_color="#00e5ff",
-        ).pack(pady=(28, 2))
+        overlay = ctk.CTkFrame(self, fg_color="transparent")
+        overlay.place(x=0, y=0, relwidth=1, relheight=1)
 
         ctk.CTkLabel(
-            header,
-            text="Amazon price monitor with email alerts",
-            font=ctk.CTkFont(size=12),
-            text_color="#505070",
-        ).pack(pady=(0, 20))
-
-        ctk.CTkFrame(self, height=1, fg_color="#1e1e2e").pack(fill="x", padx=24)
-
-        card = ctk.CTkFrame(self, fg_color="#13131a", corner_radius=14)
-        card.pack(fill="x", padx=24, pady=20)
+            overlay,
+            text="❄",
+            font=ctk.CTkFont(size=36),
+            text_color=ACCENT_ICE,
+        ).pack(pady=(32, 0))
 
         ctk.CTkLabel(
-            card, text="YOUR EMAIL",
-            font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
-            text_color="#505070",
-        ).pack(anchor="w", padx=20, pady=(18, 4))
-
-        self.email_entry = ctk.CTkEntry(
-            card,
-            placeholder_text="you@example.com",
-            height=42,
-            fg_color="#0a0a0f",
-            border_color="#1e1e2e",
-            border_width=1,
-            text_color="#e0e0f0",
-            font=ctk.CTkFont(size=13),
-        )
-        self.email_entry.pack(fill="x", padx=20)
+            overlay,
+            text="PRICE TRACKER",
+            font=ctk.CTkFont(family="Consolas", size=24, weight="bold"),
+            text_color=ACCENT_SNOW,
+        ).pack(pady=(4, 2))
 
         ctk.CTkLabel(
-            card, text="AMAZON PRODUCT URL",
-            font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
-            text_color="#505070",
-        ).pack(anchor="w", padx=20, pady=(14, 4))
+            overlay,
+            text="Amazon price monitor  ·  email alerts",
+            font=ctk.CTkFont(family="Consolas", size=11),
+            text_color=TEXT_MUTED,
+        ).pack(pady=(0, 22))
 
-        self.url_entry = ctk.CTkEntry(
-            card,
-            placeholder_text="https://www.amazon.com/dp/...",
-            height=42,
-            fg_color="#0a0a0f",
-            border_color="#1e1e2e",
-            border_width=1,
-            text_color="#e0e0f0",
-            font=ctk.CTkFont(size=13),
-        )
-        self.url_entry.pack(fill="x", padx=20)
+        ctk.CTkFrame(overlay, height=1, fg_color=BORDER).pack(fill="x", padx=36, pady=(0, 20))
 
-        ctk.CTkLabel(
-            card, text="CHECK INTERVAL (seconds)",
-            font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
-            text_color="#505070",
-        ).pack(anchor="w", padx=20, pady=(14, 4))
+        card = ctk.CTkFrame(overlay, fg_color=FROST_1, corner_radius=16,
+                            border_width=1, border_color=BORDER)
+        card.pack(fill="x", padx=28, pady=(0, 16))
+
+        self._field_label(card, "❄  YOUR EMAIL")
+        self.email_entry = FrostEntry(card, placeholder_text="you@example.com")
+        self.email_entry.pack(fill="x", padx=18, pady=(0, 14))
+
+        self._field_label(card, "❄  AMAZON PRODUCT URL")
+        self.url_entry = FrostEntry(card, placeholder_text="https://www.amazon.com/dp/...")
+        self.url_entry.pack(fill="x", padx=18, pady=(0, 14))
+
+        self._field_label(card, "❄  CHECK INTERVAL")
+        slider_row = ctk.CTkFrame(card, fg_color="transparent")
+        slider_row.pack(fill="x", padx=18, pady=(0, 18))
 
         self.interval_slider = ctk.CTkSlider(
-            card,
+            slider_row,
             from_=30, to=3600,
             number_of_steps=71,
-            button_color="#00e5ff",
-            button_hover_color="#00b8cc",
-            progress_color="#00e5ff",
-            fg_color="#1e1e2e",
+            button_color=ACCENT_GLOW,
+            button_hover_color=ACCENT_ICE,
+            progress_color=ACCENT_GLOW,
+            fg_color=FROST_2,
+            width=440,
         )
         self.interval_slider.set(60)
-        self.interval_slider.pack(fill="x", padx=20)
+        self.interval_slider.pack(side="left", expand=True, fill="x")
         self.interval_slider.configure(command=self._update_interval_label)
 
-        self.interval_label = ctk.CTkLabel(
-            card, text="60 seconds",
-            font=ctk.CTkFont(family="Courier New", size=11),
-            text_color="#00e5ff",
+        self.interval_lbl = ctk.CTkLabel(
+            slider_row,
+            text="60s",
+            font=ctk.CTkFont(family="Consolas", size=12, weight="bold"),
+            text_color=ACCENT_ICE,
+            width=52,
         )
-        self.interval_label.pack(anchor="e", padx=24, pady=(2, 18))
+        self.interval_lbl.pack(side="right")
 
         self.start_btn = ctk.CTkButton(
-            self,
-            text="▶  START TRACKING",
-            height=48,
-            font=ctk.CTkFont(family="Courier New", size=14, weight="bold"),
-            fg_color="#00e5ff",
-            hover_color="#00b8cc",
-            text_color="#0a0a0f",
-            corner_radius=10,
+            overlay,
+            text="▶   START TRACKING",
+            height=52,
+            font=ctk.CTkFont(family="Consolas", size=15, weight="bold"),
+            fg_color=ACCENT_GLOW,
+            hover_color=ACCENT_ICE,
+            text_color=BG_DEEP,
+            corner_radius=12,
             command=self._toggle_tracking,
         )
-        self.start_btn.pack(fill="x", padx=24, pady=(0, 16))
+        self.start_btn.pack(fill="x", padx=28, pady=(0, 16))
 
-        price_card = ctk.CTkFrame(self, fg_color="#13131a", corner_radius=14)
-        price_card.pack(fill="x", padx=24, pady=(0, 16))
-        price_card.columnconfigure((0, 1, 2), weight=1)
+        stats = ctk.CTkFrame(overlay, fg_color=FROST_1, corner_radius=14,
+                             border_width=1, border_color=BORDER)
+        stats.pack(fill="x", padx=28, pady=(0, 14))
 
-        self._stat_block(price_card, "CURRENT PRICE", 0).pack(side="left", expand=True, padx=8, pady=16)
-        self.current_price_label = ctk.CTkLabel(
-            price_card,
-            text="—",
-            font=ctk.CTkFont(family="Courier New", size=32, weight="bold"),
-            text_color="#ffffff",
-        )
+        col_l = ctk.CTkFrame(stats, fg_color="transparent")
+        col_m = ctk.CTkFrame(stats, fg_color="transparent")
+        col_r = ctk.CTkFrame(stats, fg_color="transparent")
+        col_l.pack(side="left", expand=True, pady=16)
+        col_m.pack(side="left", expand=True, pady=16)
+        col_r.pack(side="left", expand=True, pady=16)
 
-        col_left   = ctk.CTkFrame(price_card, fg_color="transparent")
-        col_mid    = ctk.CTkFrame(price_card, fg_color="transparent")
-        col_right  = ctk.CTkFrame(price_card, fg_color="transparent")
-        col_left.pack(side="left", expand=True, pady=16)
-        col_mid.pack(side="left", expand=True, pady=16)
-        col_right.pack(side="left", expand=True, pady=16)
+        ctk.CTkFrame(stats, width=1, fg_color=BORDER).pack(side="left", fill="y", pady=12)
 
-        ctk.CTkLabel(col_left, text="CURRENT PRICE",
-                     font=ctk.CTkFont(family="Courier New", size=9, weight="bold"),
-                     text_color="#505070").pack()
-        self.lbl_current = ctk.CTkLabel(col_left, text="—",
-                                        font=ctk.CTkFont(family="Courier New", size=26, weight="bold"),
-                                        text_color="#ffffff")
-        self.lbl_current.pack()
+        for w in stats.winfo_children():
+            w.pack_forget()
 
-        ctk.CTkLabel(col_mid, text="STARTING PRICE",
-                     font=ctk.CTkFont(family="Courier New", size=9, weight="bold"),
-                     text_color="#505070").pack()
-        self.lbl_start = ctk.CTkLabel(col_mid, text="—",
-                                      font=ctk.CTkFont(family="Courier New", size=26, weight="bold"),
-                                      text_color="#7070a0")
-        self.lbl_start.pack()
+        col_l.pack(side="left", expand=True, pady=16)
+        ctk.CTkFrame(stats, width=1, fg_color=BORDER).pack(side="left", fill="y", pady=10)
+        col_m.pack(side="left", expand=True, pady=16)
+        ctk.CTkFrame(stats, width=1, fg_color=BORDER).pack(side="left", fill="y", pady=10)
+        col_r.pack(side="left", expand=True, pady=16)
 
-        ctk.CTkLabel(col_right, text="CHECKS DONE",
-                     font=ctk.CTkFont(family="Courier New", size=9, weight="bold"),
-                     text_color="#505070").pack()
-        self.lbl_checks = ctk.CTkLabel(col_right, text="0",
-                                       font=ctk.CTkFont(family="Courier New", size=26, weight="bold"),
-                                       text_color="#7070a0")
-        self.lbl_checks.pack()
-        self.status_frame = ctk.CTkFrame(self, fg_color="#13131a", corner_radius=10)
-        self.status_frame.pack(fill="x", padx=24, pady=(0, 16))
+        self.lbl_current = self._stat_col(col_l,  "CURRENT",  "—")
+        self.lbl_start   = self._stat_col(col_m,  "STARTED",  "—")
+        self.lbl_checks  = self._stat_col(col_r,  "CHECKS",   "0")
+
+        status_bar = ctk.CTkFrame(overlay, fg_color=FROST_1, corner_radius=10,
+                                  border_width=1, border_color=BORDER)
+        status_bar.pack(fill="x", padx=28, pady=(0, 14))
 
         self.status_dot = ctk.CTkLabel(
-            self.status_frame, text="●",
-            font=ctk.CTkFont(size=13),
-            text_color="#303050",
+            status_bar, text="●",
+            font=ctk.CTkFont(size=10),
+            text_color=TEXT_DIM,
         )
-        self.status_dot.pack(side="left", padx=(16, 6), pady=12)
+        self.status_dot.pack(side="left", padx=(14, 6), pady=11)
 
         self.status_label = ctk.CTkLabel(
-            self.status_frame,
-            text="Idle — enter details above and press Start",
-            font=ctk.CTkFont(family="Courier New", size=12),
-            text_color="#505070",
+            status_bar,
+            text="Idle  —  enter your details and press Start",
+            font=ctk.CTkFont(family="Consolas", size=12),
+            text_color=TEXT_MUTED,
         )
-        self.status_label.pack(side="left", pady=12)
+        self.status_label.pack(side="left", pady=11)
+
+        log_header = ctk.CTkFrame(overlay, fg_color="transparent")
+        log_header.pack(fill="x", padx=28, pady=(0, 6))
+
         ctk.CTkLabel(
-            self, text="EVENT LOG",
-            font=ctk.CTkFont(family="Courier New", size=10, weight="bold"),
-            text_color="#505070",
-        ).pack(anchor="w", padx=28, pady=(0, 6))
+            log_header,
+            text="EVENT LOG",
+            font=ctk.CTkFont(family="Consolas", size=10, weight="bold"),
+            text_color=TEXT_DIM,
+        ).pack(side="left")
 
         self.log_box = ctk.CTkTextbox(
-            self,
-            height=190,
-            fg_color="#0a0a0f",
-            border_color="#1e1e2e",
+            overlay,
+            height=164,
+            fg_color=FROST_1,
+            border_color=BORDER,
             border_width=1,
-            font=ctk.CTkFont(family="Courier New", size=12),
-            text_color="#7070a0",
-            corner_radius=10,
+            font=ctk.CTkFont(family="Consolas", size=12),
+            text_color=TEXT_MUTED,
+            corner_radius=12,
+            scrollbar_button_color=FROST_2,
+            scrollbar_button_hover_color=BORDER,
         )
-        self.log_box.pack(fill="x", padx=24, pady=(0, 24))
+        self.log_box.pack(fill="x", padx=28, pady=(0, 24))
         self.log_box.configure(state="disabled")
 
-    def _stat_block(self, parent, label, col):
-        frame = ctk.CTkFrame(parent, fg_color="transparent")
-        ctk.CTkLabel(frame, text=label,
-                     font=ctk.CTkFont(family="Courier New", size=9, weight="bold"),
-                     text_color="#505070").pack()
-        return frame
+
+    def _field_label(self, parent, text: str):
+        ctk.CTkLabel(
+            parent,
+            text=text,
+            font=ctk.CTkFont(family="Consolas", size=10, weight="bold"),
+            text_color=TEXT_MUTED,
+        ).pack(anchor="w", padx=18, pady=(14, 5))
+
+    def _stat_col(self, parent, label: str, initial: str):
+        ctk.CTkLabel(
+            parent,
+            text=label,
+            font=ctk.CTkFont(family="Consolas", size=9, weight="bold"),
+            text_color=TEXT_DIM,
+        ).pack()
+        lbl = ctk.CTkLabel(
+            parent,
+            text=initial,
+            font=ctk.CTkFont(family="Consolas", size=24, weight="bold"),
+            text_color=TEXT_PRIMARY,
+        )
+        lbl.pack()
+        return lbl
 
 
     def _update_interval_label(self, val):
         v = int(val)
-        self.interval_label.configure(text=f"{v} second{'s' if v != 1 else ''}")
+        self.interval_lbl.configure(text=f"{v}s")
 
-    def _log(self, message: str, color: str = "#7070a0"):
-        ts  = datetime.now().strftime("%H:%M:%S")
-        line = f"[{ts}]  {message}\n"
+    def _log(self, message: str):
+        ts = datetime.now().strftime("%H:%M:%S")
         self.log_box.configure(state="normal")
-        self.log_box.insert("end", line)
+        self.log_box.insert("end", f"[{ts}]  {message}\n")
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
 
-    def _set_status(self, text: str, color: str = "#505070"):
+    def _set_status(self, text: str, color: str = TEXT_MUTED):
         self.status_label.configure(text=text, text_color=color)
         self.status_dot.configure(text_color=color)
-
 
     def _toggle_tracking(self):
         if not self._tracking:
@@ -294,24 +390,24 @@ class PriceTrackerApp(ctk.CTk):
         url   = self.url_entry.get().strip()
 
         if not email or "@" not in email:
-            self._set_status("⚠  Enter a valid email address.", "#ff6b35")
+            self._set_status("⚠  Enter a valid email address.", ORANGE_EMBER)
             return
         if not url.startswith("http"):
-            self._set_status("⚠  Enter a valid Amazon URL.", "#ff6b35")
+            self._set_status("⚠  Enter a valid Amazon URL.", ORANGE_EMBER)
             return
 
         self._tracking    = True
         self._check_count = 0
         self.start_btn.configure(
-            text="■  STOP TRACKING",
-            fg_color="#1e1e2e",
-            hover_color="#2a2a3a",
-            text_color="#ff6b35",
+            text="■   STOP TRACKING",
+            fg_color=FROST_2,
+            hover_color=BORDER,
+            text_color=ORANGE_EMBER,
         )
-        self._set_status("Fetching initial price…", "#00e5ff")
-        self._log("Tracker started.")
-        self._log(f"URL: {url[:60]}{'…' if len(url) > 60 else ''}")
-        self._log(f"Sending alerts to: {email}")
+        self._set_status("Fetching initial price…", ACCENT_ICE)
+        self._log("— Tracker started —")
+        self._log(f"URL  : {url[:55]}{'…' if len(url)>55 else ''}")
+        self._log(f"Alert: {email}")
 
         self._thread = threading.Thread(
             target=self._tracking_loop,
@@ -323,27 +419,30 @@ class PriceTrackerApp(ctk.CTk):
     def _stop_tracking(self):
         self._tracking = False
         self.start_btn.configure(
-            text="▶  START TRACKING",
-            fg_color="#00e5ff",
-            hover_color="#00b8cc",
-            text_color="#0a0a0f",
+            text="▶   START TRACKING",
+            fg_color=ACCENT_GLOW,
+            hover_color=ACCENT_ICE,
+            text_color=BG_DEEP,
         )
-        self._set_status("Stopped.", "#505070")
-        self._log("Tracker stopped.")
+        self._set_status("Stopped.", TEXT_MUTED)
+        self._log("— Tracker stopped —")
+
 
     def _tracking_loop(self, url: str, email: str):
-        # Fetch initial price
         price = grab_price(url)
         if price is None:
-            self.after(0, lambda: self._set_status("✗  Couldn't fetch price. Check the URL.", "#ff6b35"))
-            self.after(0, lambda: self._log("ERROR: Could not fetch price from URL."))
+            self.after(0, lambda: self._set_status("✗  Couldn't fetch price. Check the URL.", ORANGE_EMBER))
+            self.after(0, lambda: self._log("ERROR: Could not fetch price."))
             self.after(0, self._stop_tracking)
             return
 
-        self._last_price = price
-        self.after(0, lambda: self._update_price_display(price, price, "start"))
-        self.after(0, lambda: self._log(f"Starting price: ${price:.2f}"))
-        self.after(0, lambda: self._set_status(f"Watching — last check just now", "#00e5ff"))
+        self._last_price  = price
+        self._start_price = price
+        self.after(0, lambda p=price: (
+            self._update_display(p, p, "start"),
+            self._log(f"Starting price: ${p:.2f}"),
+            self._set_status(f"Watching  ·  press Stop to quit", ACCENT_ICE),
+        ))
 
         while self._tracking:
             interval = int(self.interval_slider.get())
@@ -357,7 +456,7 @@ class PriceTrackerApp(ctk.CTk):
             count = self._check_count
 
             if current is None:
-                self.after(0, lambda: self._log("WARNING: Failed to fetch price, retrying..."))
+                self.after(0, lambda: self._log("WARNING: Failed to fetch — retrying next cycle"))
                 continue
 
             last = self._last_price
@@ -369,41 +468,51 @@ class PriceTrackerApp(ctk.CTk):
                 change = current - last
                 self.after(0, lambda c=current, l=last, ch=change: self._on_rise(c, l, ch, url, email))
             else:
-                self.after(0, lambda c=current, n=count: (
-                    self._log(f"Check #{n}: Price unchanged at ${c:.2f}"),
-                    self._set_status(f"Watching — check #{n} complete", "#00e5ff"),
-                    self._update_price_display(c, self._last_price, "same"),
+                sp = self._start_price
+                self.after(0, lambda c=current, n=count, s=sp: (
+                    self._log(f"Check #{n}  ·  ${c:.2f}  ·  no change"),
+                    self._set_status(f"Watching  ·  check #{n} complete", ACCENT_ICE),
+                    self._update_display(c, s, "same"),
                 ))
 
             self._last_price = current
 
+
     def _on_drop(self, current, last, change, url, email):
         self._last_price = current
-        self._update_price_display(current, last, "drop")
-        self._log(f"Price drop: ${last:.2f} → ${current:.2f}  (saved ${change:.2f})")
-        self._set_status(f"Price dropped ${change:.2f}! Email sent.", "#22c55e")
+        self._update_display(current, self._start_price, "drop")
+        self._log(f"Drop  ${last:.2f} → ${current:.2f}  (−${change:.2f})  · email sent")
+        self._set_status(f"Price dropped ${change:.2f}!  Email sent.", GREEN_FROST)
         threading.Thread(target=send_email, args=(
             f"Price Dropped to ${current:.2f}!",
             f"""
-            <div style="font-family:sans-serif;max-width:480px;margin:auto">
-              <h2 style="color:#16a34a;margin-bottom:4px">💰 Price Drop!</h2>
-              <p style="color:#555;font-size:14px">Good news — the price went down.</p>
-              <table style="width:100%;font-size:15px;border-collapse:collapse;margin:16px 0">
-                <tr style="border-bottom:1px solid #eee">
-                  <td style="padding:8px 0;color:#888">Was</td>
-                  <td style="padding:8px 0;text-align:right"><s>${last:.2f}</s></td>
+            <div style="font-family:'Segoe UI',sans-serif;max-width:500px;margin:auto;
+                        background:#0d1628;color:#deeeff;border-radius:12px;padding:32px">
+              <div style="font-size:32px;margin-bottom:8px">❄ 💰</div>
+              <h2 style="color:#5ddba5;margin:0 0 6px">Price Drop Detected</h2>
+              <p style="color:#4a6a8a;font-size:14px;margin:0 0 24px">
+                Good news — the price went down.
+              </p>
+              <table style="width:100%;font-size:15px;border-collapse:collapse">
+                <tr style="border-bottom:1px solid #1e3356">
+                  <td style="padding:10px 0;color:#4a6a8a">Was</td>
+                  <td style="padding:10px 0;text-align:right;color:#4a6a8a"><s>${last:.2f}</s></td>
                 </tr>
-                <tr style="border-bottom:1px solid #eee">
-                  <td style="padding:8px 0;font-weight:bold">Now</td>
-                  <td style="padding:8px 0;text-align:right;font-weight:bold;color:#16a34a">${current:.2f}</td>
+                <tr style="border-bottom:1px solid #1e3356">
+                  <td style="padding:10px 0;font-weight:bold">Now</td>
+                  <td style="padding:10px 0;text-align:right;font-weight:bold;
+                             color:#5ddba5;font-size:20px">${current:.2f}</td>
                 </tr>
                 <tr>
-                  <td style="padding:8px 0;color:#16a34a">You save</td>
-                  <td style="padding:8px 0;text-align:right;color:#16a34a">${change:.2f}</td>
+                  <td style="padding:10px 0;color:#5ddba5">You save</td>
+                  <td style="padding:10px 0;text-align:right;color:#5ddba5">${change:.2f}</td>
                 </tr>
               </table>
-              <a href="{url}" style="display:inline-block;background:#16a34a;color:#fff;padding:12px 24px;
-                 text-decoration:none;border-radius:6px;font-weight:bold">Buy Now →</a>
+              <a href="{url}" style="display:inline-block;margin-top:24px;
+                 background:#5ddba5;color:#080e1a;padding:13px 28px;
+                 text-decoration:none;border-radius:8px;font-weight:bold;font-size:15px">
+                Buy Now →
+              </a>
             </div>
             """,
             email,
@@ -411,40 +520,67 @@ class PriceTrackerApp(ctk.CTk):
 
     def _on_rise(self, current, last, change, url, email):
         self._last_price = current
-        self._update_price_display(current, last, "rise")
-        self._log(f"Price rise:  ${last:.2f} → ${current:.2f}  (+${change:.2f})")
-        self._set_status(f"Price rose ${change:.2f}. Email sent.", "#ff6b35")
+        self._update_display(current, self._start_price, "rise")
+        self._log(f"Rise  ${last:.2f} → ${current:.2f}  (+${change:.2f})  · email sent")
+        self._set_status(f"📈  Price rose ${change:.2f}.  Email sent.", ORANGE_EMBER)
         threading.Thread(target=send_email, args=(
             f"Price Increased to ${current:.2f}",
             f"""
-            <div style="font-family:sans-serif;max-width:480px;margin:auto">
-              <h2 style="color:#dc2626;margin-bottom:4px">📈 Price Increase</h2>
-              <p style="color:#555;font-size:14px">The price went up since last check.</p>
-              <table style="width:100%;font-size:15px;border-collapse:collapse;margin:16px 0">
-                <tr style="border-bottom:1px solid #eee">
-                  <td style="padding:8px 0;color:#888">Was</td>
-                  <td style="padding:8px 0;text-align:right">${last:.2f}</td>
+            <div style="font-family:'Segoe UI',sans-serif;max-width:500px;margin:auto;
+                        background:#0d1628;color:#deeeff;border-radius:12px;padding:32px">
+              <div style="font-size:32px;margin-bottom:8px">❄ 📈</div>
+              <h2 style="color:#f09060;margin:0 0 6px">Price Increase Detected</h2>
+              <p style="color:#4a6a8a;font-size:14px;margin:0 0 24px">
+                The price went up since your last check.
+              </p>
+              <table style="width:100%;font-size:15px;border-collapse:collapse">
+                <tr style="border-bottom:1px solid #1e3356">
+                  <td style="padding:10px 0;color:#4a6a8a">Was</td>
+                  <td style="padding:10px 0;text-align:right;color:#4a6a8a">${last:.2f}</td>
                 </tr>
                 <tr>
-                  <td style="padding:8px 0;font-weight:bold">Now</td>
-                  <td style="padding:8px 0;text-align:right;font-weight:bold;color:#dc2626">${current:.2f}</td>
+                  <td style="padding:10px 0;font-weight:bold">Now</td>
+                  <td style="padding:10px 0;text-align:right;font-weight:bold;
+                             color:#f09060;font-size:20px">${current:.2f}</td>
                 </tr>
               </table>
-              <a href="{url}" style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;
-                 text-decoration:none;border-radius:6px;font-weight:bold">View Product →</a>
+              <a href="{url}" style="display:inline-block;margin-top:24px;
+                 background:#4da6d6;color:#080e1a;padding:13px 28px;
+                 text-decoration:none;border-radius:8px;font-weight:bold;font-size:15px">
+                View Product →
+              </a>
             </div>
             """,
             email,
         ), daemon=True).start()
 
-    def _update_price_display(self, current: float, start: float, state: str):
-        colors = {"drop": "#22c55e", "rise": "#ff6b35", "same": "#ffffff", "start": "#ffffff"}
-        self.lbl_current.configure(text=f"${current:.2f}", text_color=colors.get(state, "#fff"))
-        self.lbl_start.configure(text=f"${start:.2f}")
-        self.lbl_checks.configure(text=str(self._check_count))
+    def _update_display(self, current: float, start: float, state: str):
+        color_map = {
+            "drop":  GREEN_FROST,
+            "rise":  ORANGE_EMBER,
+            "same":  TEXT_PRIMARY,
+            "start": ACCENT_ICE,
+        }
+        self.lbl_current.configure(
+            text=f"${current:.2f}",
+            text_color=color_map.get(state, TEXT_PRIMARY),
+        )
+        if start is not None:
+            self.lbl_start.configure(text=f"${start:.2f}", text_color=TEXT_MUTED)
+        self.lbl_checks.configure(text=str(self._check_count), text_color=TEXT_MUTED)
+
+
+    def on_close(self):
+        self._tracking = False
+        self.snow.stop()
+        self.destroy()
 
 
 if __name__ == "__main__":
     app = PriceTrackerApp()
-    app.iconbitmap("favicon.ico")
+    try:
+        app.iconbitmap("favicon.ico")
+    except Exception:
+        pass
+    app.protocol("WM_DELETE_WINDOW", app.on_close)
     app.mainloop()
