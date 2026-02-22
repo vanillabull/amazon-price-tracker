@@ -1,2 +1,2 @@
 # amazon-price-tracker
-I custom made this, tho the email sender and GUI was vibe coded. also my API key will be included in the exe but not in the open source, for obvious reasons. enjoy!
+This amazon price tracker checks the price every -- seconds and if it increased or decreased it updates you by sending an email or showing in the app. [TO USE (IMPORTANT): use pip to install resend, threading, requests, BeautifulSoup, customtkinter and python obviously]  I custom made this, tho the email sender and GUI was vibe coded, if you want to use the code. Make sure to replace the API key at the start with a Resend API key, or else emails wont be sent. enjoy!
